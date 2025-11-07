@@ -1,0 +1,19 @@
+args a;
+int b, c, d;
+b = 5;
+c = 0;
+d = a + 1;
+while d > 2 then
+{
+    b = b + a;
+    d = d - 1;
+}
+if b > 10 then
+{
+    c = b - 3;
+}
+else
+{
+    c = b + 2;
+}
+return c;

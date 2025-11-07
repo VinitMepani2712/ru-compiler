@@ -1,0 +1,18 @@
+args a;
+int b, c, d;
+b = a + 3;
+c = 1;
+if b > 6 then
+{
+    d = b - 2;
+}
+else
+{
+    d = b + 4;
+}
+while d > 3 then
+{
+    c = c + a;
+    d = d - 2;
+}
+return c;

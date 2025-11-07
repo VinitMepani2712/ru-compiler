@@ -1,0 +1,18 @@
+args a;
+int b, c;
+b = 3;
+c = 1;
+if a > 2 then
+{
+    b = a * 2;
+}
+else
+{
+    b = a + 5;
+}
+while b > 4 then
+{
+    c = c + b;
+    b = b - 1;
+}
+return c;

@@ -1,0 +1,22 @@
+args a;
+int b, c;
+
+b = a + 2;
+c = 0;
+
+while b > 2 then
+{
+    c = c + a;
+    b = b - 1;
+}
+
+if c < 5 then
+{
+    c = c + 1;
+}
+else
+{
+    c = c;
+}
+
+return c;
