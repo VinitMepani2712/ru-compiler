@@ -9,33 +9,38 @@ entry:
     %t1 = load i64, ptr %a.alloc
     %cmp = icmp ugt i64 %t1, 2
     br i1 %cmp, label %if.then, label %if.else
+
 if.then:
     %t2 = load i64, ptr %a.alloc
     %t3 = mul i64 %t2, 2
     store i64 %t3, ptr %b.alloc
     br label %if.end
+
 if.else:
     %t4 = load i64, ptr %a.alloc
     %t5 = add i64 %t4, 5
     store i64 %t5, ptr %b.alloc
     br label %if.end
+
 if.end:
     br label %while.cond
-while.cond:
-    %1 = load i64, ptr %b.alloc
-    %cmp1 = icmp ugt i64 %1, 4
-    br i1 %cmp1, label %while.body, label %while.end
-while.body:
-    %t6 = load i64, ptr %c.alloc
-    %t7 = load i64, ptr %b.alloc
-    %t8 = add i64 %t6, %t7
-    store i64 %t8, ptr %c.alloc
-    %t9 = load i64, ptr %b.alloc
-    %t10 = sub i64 %t9, 1
-    store i64 %t10, ptr %b.alloc
-    br label %while.cond
-while.end:
-    %t11 = load i64, ptr %c.alloc
-    ret i64 %t11
-}
 
+while.cond:
+    %t6 = load i64, ptr %b.alloc
+    %cmp1 = icmp ugt i64 %t6, 4
+    br i1 %cmp1, label %while.body, label %while.end
+
+while.body:
+    %t7 = load i64, ptr %c.alloc
+    %t8 = load i64, ptr %b.alloc
+    %t9 = add i64 %t7, %t8
+    store i64 %t9, ptr %c.alloc
+    %t10 = load i64, ptr %b.alloc
+    %t11 = sub i64 %t10, 1
+    store i64 %t11, ptr %b.alloc
+    br label %while.cond
+
+while.end:
+    %t12 = load i64, ptr %c.alloc
+    ret i64 %t12
+}

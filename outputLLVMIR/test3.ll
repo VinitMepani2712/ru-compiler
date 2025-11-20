@@ -7,34 +7,39 @@ entry:
     store i64 1, ptr %b.alloc
     store i64 0, ptr %c.alloc
     br label %while.cond
+
 while.cond:
-    %1 = load i64, ptr %a.alloc
-    %cmp = icmp ugt i64 %1, 1
+    %t1 = load i64, ptr %a.alloc
+    %cmp = icmp ugt i64 %t1, 1
     br i1 %cmp, label %while.body, label %while.end
+
 while.body:
-    %t1 = load i64, ptr %c.alloc
-    %t2 = load i64, ptr %b.alloc
-    %t3 = add i64 %t1, %t2
-    store i64 %t3, ptr %c.alloc
-    %t4 = load i64, ptr %a.alloc
-    %t5 = sub i64 %t4, 1
-    store i64 %t5, ptr %a.alloc
+    %t2 = load i64, ptr %c.alloc
+    %t3 = load i64, ptr %b.alloc
+    %t4 = add i64 %t2, %t3
+    store i64 %t4, ptr %c.alloc
+    %t5 = load i64, ptr %a.alloc
+    %t6 = sub i64 %t5, 1
+    store i64 %t6, ptr %a.alloc
     br label %while.cond
+
 while.end:
-    %t6 = load i64, ptr %c.alloc
-    %cmp1 = icmp ult i64 %t6, 5
-    br i1 %cmp1, label %if.then, label %if.else
-if.then:
     %t7 = load i64, ptr %c.alloc
-    %t8 = add i64 %t7, 2
-    store i64 %t8, ptr %c.alloc
-    br label %if.end
-if.else:
-    %t9 = load i64, ptr %c.alloc
+    %cmp1 = icmp ult i64 %t7, 5
+    br i1 %cmp1, label %if.then, label %if.else
+
+if.then:
+    %t8 = load i64, ptr %c.alloc
+    %t9 = add i64 %t8, 2
     store i64 %t9, ptr %c.alloc
     br label %if.end
-if.end:
-    %t10 = load i64, ptr %c.alloc
-    ret i64 %t10
-}
 
+if.else:
+    %t10 = load i64, ptr %c.alloc
+    store i64 %t10, ptr %c.alloc
+    br label %if.end
+
+if.end:
+    %t11 = load i64, ptr %c.alloc
+    ret i64 %t11
+}
