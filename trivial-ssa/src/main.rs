@@ -433,7 +433,7 @@ impl Parser {
 }
 
 fn generate_llvm_ir(prog: &Program) -> String {
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::BTreeSet;
 
     struct Ids {
         t: i32,
@@ -460,34 +460,6 @@ fn generate_llvm_ir(prog: &Program) -> String {
         }
     }
 
-    //  SSA environment
-    #[derive(Clone, Default)]
-    struct Env(HashMap<String, String>);
-
-    impl Env {
-        fn get(&self, v: &str) -> String {
-            self.0
-                .get(v)
-                .cloned()
-                .unwrap_or_else(|| format!("%{}.undef", v))
-        }
-
-        fn set(&mut self, v: &str, s: String) {
-            self.0.insert(v.to_string(), s);
-        }
-    }
-
-    //  Helper to extract latest alloc version
-    fn last_alloc_ver(env: &Env, v: &str) -> i32 {
-        let prefix = format!("%{}.alloc.", v);
-        env.0
-            .get(v)
-            .and_then(|s| s.strip_prefix(&prefix))
-            .and_then(|n| n.parse::<i32>().ok())
-            .unwrap_or(-1)
-    }
-
-    //  Collect all variables assigned inside block
     fn collect_assigned(sts: &[Stmt]) -> BTreeSet<String> {
         let mut set = BTreeSet::new();
         for st in sts {
@@ -508,16 +480,19 @@ fn generate_llvm_ir(prog: &Program) -> String {
         set
     }
 
-    //  Expression emission
-    fn emit_expr(e: &ExprNode, ids: &mut Ids, out: &mut String, env: &Env) -> String {
+    fn emit_expr(e: &ExprNode, ids: &mut Ids, out: &mut String) -> String {
         match e {
             ExprNode::Number(n) => n.to_string(),
 
-            ExprNode::Identifier(x) => env.get(x),
+            ExprNode::Identifier(x) => {
+                let tmp = ids.next_tmp();
+                out.push_str(&format!("    {} = load i64, ptr %{}.alloc\n", tmp, x));
+                tmp
+            }
 
             ExprNode::BinOp(op, l, r) => {
-                let a = emit_expr(l, ids, out, env);
-                let b = emit_expr(r, ids, out, env);
+                let a = emit_expr(l, ids, out);
+                let b = emit_expr(r, ids, out);
 
                 let (name, inst) = match op.as_str() {
                     "+" => (ids.next_tmp(), "add"),
@@ -532,8 +507,7 @@ fn generate_llvm_ir(prog: &Program) -> String {
         }
     }
 
-    //  Boolean emission
-    fn emit_bool(b: &BoolExpr, ids: &mut Ids, out: &mut String, env: &Env) -> String {
+    fn emit_bool(b: &BoolExpr, ids: &mut Ids, out: &mut String) -> String {
         match b {
             BoolExpr::True => {
                 let c = ids.next_cmp();
@@ -548,8 +522,8 @@ fn generate_llvm_ir(prog: &Program) -> String {
             }
 
             BoolExpr::Cmp(op, l, r) => {
-                let a = emit_expr(l, ids, out, env);
-                let b = emit_expr(r, ids, out, env);
+                let a = emit_expr(l, ids, out);
+                let b = emit_expr(r, ids, out);
                 let c = ids.next_cmp();
 
                 let pred = match op.as_str() {
@@ -567,163 +541,84 @@ fn generate_llvm_ir(prog: &Program) -> String {
         }
     }
 
-    //  Statement emission
-    fn emit_stmts(
-        stmts: &[Stmt],
-        ids: &mut Ids,
-        out: &mut String,
-        mut env: Env,
-    ) -> (Env, Option<String>) {
-        let mut ret_val: Option<String> = None;
+
+    fn emit_stmts(stmts: &[Stmt], ids: &mut Ids, out: &mut String) -> bool {
+        let mut did_return = false;
 
         for st in stmts {
-            if ret_val.is_some() {
+            if did_return {
                 break;
             }
 
             match st {
-                // Assignment
                 Stmt::Assign(v, e) => {
-                    let val = emit_expr(e, ids, out, &env);
-                    env.set(v, val);
+                    let val = emit_expr(e, ids, out);
+                    out.push_str(&format!("    store i64 {}, ptr %{}.alloc\n", val, v));
                 }
 
-                // If-Then-Else
                 Stmt::IfThenElse(cond, then_blk, else_blk) => {
-                    let c = emit_bool(cond, ids, out, &env);
+                    let c = emit_bool(cond, ids, out);
                     out.push_str(&format!(
                         "    br i1 {}, label %if.then, label %if.else\n",
                         c
                     ));
 
                     out.push_str("\nif.then:\n");
-                    let (env_then, r_then) = emit_stmts(then_blk, ids, out, env.clone());
-                    out.push_str("    br label %if.end\n");
+                    let then_ret = emit_stmts(then_blk, ids, out);
+                    if !then_ret {
+                        out.push_str("    br label %if.end\n");
+                    }
 
                     out.push_str("\nif.else:\n");
-                    let (env_else, r_else) = emit_stmts(else_blk, ids, out, env.clone());
-                    out.push_str("    br label %if.end\n");
-
-                    if let Some(v) = r_then.or(r_else) {
-                        return (env, Some(v));
+                    let else_ret = emit_stmts(else_blk, ids, out);
+                    if !else_ret {
+                        out.push_str("    br label %if.end\n");
                     }
 
                     out.push_str("\nif.end:\n");
-                    let mut merged = env.clone();
-                    let keys: BTreeSet<_> = env_then
-                        .0
-                        .keys()
-                        .chain(env_else.0.keys())
-                        .cloned()
-                        .collect();
-
-                    for k in keys {
-                        let lt = env_then.0.get(&k).cloned().unwrap_or_else(|| env.get(&k));
-                        let rt = env_else.0.get(&k).cloned().unwrap_or_else(|| env.get(&k));
-
-                        if lt != rt {
-                            let ver = last_alloc_ver(&merged, &k) + 1;
-                            let phi = format!("%{}.alloc.{}", k, ver);
-                            out.push_str(&format!(
-                                "    {} = phi i64 [ {}, %if.then ], [ {}, %if.else ]\n",
-                                phi, lt, rt
-                            ));
-                            merged.set(&k, phi);
-                        }
+                    if then_ret && else_ret {
+                        return true;
                     }
-                    env = merged;
+
                 }
 
-                // While loop
                 Stmt::While(cond, body) => {
                     out.push_str("    br label %while.cond\n\n");
+
                     out.push_str("while.cond:\n");
-
-                    // Collect variables that are modified inside the loop
-                    let mutated = collect_assigned(body);
-                    let mut pre_incoming: HashMap<String, String> = HashMap::new();
-
-                    for v in mutated.iter() {
-                        pre_incoming.insert(v.clone(), env.get(v));
-                    }
-
-                    let mut phi_map: HashMap<String, String> = HashMap::new();
-                    for v in mutated.iter() {
-                        let ver = last_alloc_ver(&env, v) + 1;
-                        let phi_name = format!("%{}.alloc.{}", v, ver);
-                        out.push_str(&format!(
-                            "    {} = phi i64 [ {}, %if.end ], [ {}, %while.body ]\n",
-                            phi_name, pre_incoming[v], phi_name
-                        ));
-                        phi_map.insert(v.clone(), phi_name.clone());
-                        env.set(v, phi_name);
-                    }
-
-                    // Emit condition
-                    let cnd = emit_bool(cond, ids, out, &env);
+                    let cnd = emit_bool(cond, ids, out);
                     out.push_str(&format!(
                         "    br i1 {}, label %while.body, label %while.end\n\n",
                         cnd
                     ));
 
-                    // Emit body
                     out.push_str("while.body:\n");
-                    let mut body_env = env.clone();
+                    let body_ret = emit_stmts(body, ids, out);
 
-                    for st2 in body {
-                        match st2 {
-                            Stmt::Assign(v, e) => {
-                                let val = emit_expr(e, ids, out, &body_env);
-                                body_env.set(v, val);
-                            }
-                            _ => {
-                                let (_b_env, r) = emit_stmts(
-                                    std::slice::from_ref(st2),
-                                    ids,
-                                    out,
-                                    body_env.clone(),
-                                );
-                                if let Some(v) = r {
-                                    return (env, Some(v));
-                                }
-                            }
-                        }
+                    if body_ret {
+                        out.push_str("\nwhile.end:\n");
+                        return true;
+                    } else {
+                        out.push_str("    br label %while.cond\n\n");
+                        out.push_str("while.end:\n");
                     }
-
-                    for v in mutated.iter() {
-                        let final_val = body_env.get(v);
-                        let phi_name = phi_map.get(v).unwrap();
-
-                        let old_phi = format!(
-                            "    {} = phi i64 [ {}, %if.end ], [ {}, %while.body ]",
-                            phi_name, pre_incoming[v], phi_name
-                        );
-                        let new_phi = format!(
-                            "    {} = phi i64 [ {}, %if.end ], [ {}, %while.body ]",
-                            phi_name, pre_incoming[v], final_val
-                        );
-                        *out = out.replace(&old_phi, &new_phi);
-                    }
-
-                    out.push_str("    br label %while.cond\n\n");
-                    out.push_str("while.end:\n");
                 }
 
-                // Return
+
                 Stmt::Return(v) => {
-                    let val = env.get(v);
-                    out.push_str(&format!("    ret i64 {}\n", val));
-                    ret_val = Some(val);
+                    let tmp = ids.next_tmp();
+                    out.push_str(&format!("    {} = load i64, ptr %{}.alloc\n", tmp, v));
+                    out.push_str(&format!("    ret i64 {}\n", tmp));
+                    did_return = true;
                 }
 
                 Stmt::Empty => {}
             }
         }
 
-        (env, ret_val)
+        did_return
     }
 
-    //  Function prologue
     let mut out = String::new();
     out.push_str(&format!("define i64 @foo("));
     out.push_str(
@@ -736,25 +631,33 @@ fn generate_llvm_ir(prog: &Program) -> String {
     );
     out.push_str(") {\nentry:\n");
 
-    // Map arguments into initial SSA names
-    let mut env = Env::default();
+    let mut vars: BTreeSet<String> = BTreeSet::new();
     for a in &prog.args {
-        env.set(a, format!("%{}", a));
+        vars.insert(a.clone());
+    }
+    vars.extend(collect_assigned(&prog.stmts));
+
+    for v in &vars {
+        out.push_str(&format!("    %{}.alloc = alloca i64\n", v));
     }
 
-    // Emit all top-level statements
-    let mut ids = Ids::new();
-    let (_final_env, got_ret) = emit_stmts(&prog.stmts, &mut ids, &mut out, env);
+    for a in &prog.args {
+        out.push_str(&format!("    store i64 %{}, ptr %{}.alloc\n", a, a));
+    }
 
-    // Default return if missing
-    if got_ret.is_none() {
-        let c_val = _final_env.get("c");
-        out.push_str(&format!("    ret i64 {}\n", c_val));
+    let mut ids = Ids::new();
+    let did_return = emit_stmts(&prog.stmts, &mut ids, &mut out);
+
+    if !did_return {
+        let tmp = ids.next_tmp();
+        out.push_str(&format!("    {} = load i64, ptr %{}.alloc\n", tmp, prog.ret));
+        out.push_str(&format!("    ret i64 {}\n", tmp));
     }
 
     out.push_str("}\n");
-    out
+    out  
 }
+
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
